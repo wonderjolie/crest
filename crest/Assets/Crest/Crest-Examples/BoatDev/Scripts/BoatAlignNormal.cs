@@ -29,7 +29,7 @@ public class BoatAlignNormal : FloatingObjectBase
 
     [SerializeField, Tooltip("Computes a separate normal based on boat length to get more accurate orientations, at the cost of an extra collision sample.")]
     bool _useBoatLength = false;
-    [Tooltip("Length dimension of boat. Only used if Use Boat Length is enabled."), SerializeField]
+    [Tooltip("Length dimension of boat. Only used if Use Boat Length is enabled."), SerializeField, PredicatedField("_useBoatLength")]
     float _boatLength = 3f;
 
     [Header("Drag")]
@@ -59,8 +59,6 @@ public class BoatAlignNormal : FloatingObjectBase
 
     Rigidbody _rb;
 
-    SamplingData _samplingDataFlow = new SamplingData();
-
     SampleHeightHelper _sampleHeightHelper = new SampleHeightHelper();
     SampleHeightHelper _sampleHeightHelperLengthwise = new SampleHeightHelper();
     SampleFlowHelper _sampleFlowHelper = new SampleFlowHelper();
@@ -85,17 +83,10 @@ public class BoatAlignNormal : FloatingObjectBase
 
         UnityEngine.Profiling.Profiler.BeginSample("BoatAlignNormal.FixedUpdate");
 
-        // Trigger processing of displacement textures that have come back this frame. This will be processed
-        // anyway in Update(), but FixedUpdate() is earlier so make sure it's up to date now.
-        if (OceanRenderer.Instance._simSettingsAnimatedWaves.CollisionSource == SimSettingsAnimatedWaves.CollisionSources.OceanDisplacementTexturesGPU && GPUReadbackDisps.Instance)
-        {
-            GPUReadbackDisps.Instance.ProcessRequests();
-        }
-
         var collProvider = OceanRenderer.Instance.CollisionProvider;
         var position = transform.position;
 
-        _sampleHeightHelper.Init(transform.position, _boatWidth);
+        _sampleHeightHelper.Init(transform.position, _boatWidth, true);
         var height = OceanRenderer.Instance.SeaLevel;
         var normal = Vector3.up;
         var waterSurfaceVel = Vector3.zero;
@@ -171,7 +162,7 @@ public class BoatAlignNormal : FloatingObjectBase
 
         if (_useBoatLength)
         {
-            _sampleHeightHelperLengthwise.Init(transform.position, _boatLength);
+            _sampleHeightHelperLengthwise.Init(transform.position, _boatLength, true);
             var dummy = 0f;
             if (_sampleHeightHelperLengthwise.Sample(ref dummy, ref normalLongitudinal))
             {

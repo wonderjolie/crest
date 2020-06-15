@@ -70,18 +70,11 @@ namespace Crest
                 return;
             }
 
-            // Trigger processing of displacement textures that have come back this frame. This will be processed
-            // anyway in Update(), but FixedUpdate() is earlier so make sure it's up to date now.
-            if (OceanRenderer.Instance._simSettingsAnimatedWaves.CollisionSource == SimSettingsAnimatedWaves.CollisionSources.OceanDisplacementTexturesGPU && GPUReadbackDisps.Instance)
-            {
-                GPUReadbackDisps.Instance.ProcessRequests();
-            }
-
             var collProvider = OceanRenderer.Instance.CollisionProvider;
             var position = transform.position;
 
             var normal = Vector3.up; var waterSurfaceVel = Vector3.zero;
-            _sampleHeightHelper.Init(transform.position, _objectWidth);
+            _sampleHeightHelper.Init(transform.position, _objectWidth, true);
             _sampleHeightHelper.Sample(ref _displacementToObject, ref normal, ref waterSurfaceVel);
 
             var undispPos = transform.position - _displacementToObject;

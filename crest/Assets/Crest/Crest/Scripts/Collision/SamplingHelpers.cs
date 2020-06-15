@@ -3,31 +3,42 @@
 namespace Crest
 {
     /// <summary>
-    /// Helper to obtain the ocean surface height at a single location. This is not particularly efficient to sample a single height,
+    /// Helper to obtain the ocean surface height at a single location per frame. This is not particularly efficient to sample a single height,
     /// but is a fairly common case.
     /// </summary>
     public class SampleHeightHelper
     {
-        SamplingData _samplingData = new SamplingData();
         Vector3[] _queryPos = new Vector3[1];
         Vector3[] _queryResult = new Vector3[1];
         Vector3[] _queryResultNormal = new Vector3[1];
         Vector3[] _queryResultVel = new Vector3[1];
 
-        bool _valid = false;
+        float _minLength = 0f;
+
+#if UNITY_EDITOR
+        int _lastFrame = -1;
+#endif
 
         /// <summary>
-        /// Call this to prime the sampling
+        /// Call this to prime the sampling. The SampleHeightHelper is good for one query per frame - if it is called multiple times in one frame
+        /// it will throw a warning. Calls from FixedUpdate are an exception to this - pass true as the last argument to disable the warning.
         /// </summary>
         /// <param name="i_queryPos">World space position to sample</param>
         /// <param name="i_minLength">The smallest length scale you are interested in. If you are sampling data for boat physics,
         /// pass in the boats width. Larger objects will ignore small wavelengths.</param>
-        /// <returns></returns>
-        public bool Init(Vector3 i_queryPos, float i_minLength)
+        /// <param name="fromFixedUpdate">Pass true if calling from FixedUpdate(). This will omit a warning when there on multipled-FixedUpdate frames.</param>
+        public void Init(Vector3 i_queryPos, float i_minLength = 0f, bool fromFixedUpdate = false)
         {
             _queryPos[0] = i_queryPos;
-            var rect = new Rect(i_queryPos.x, i_queryPos.z, 0f, 0f);
-            return _valid = OceanRenderer.Instance.CollisionProvider.GetSamplingData(ref rect, i_minLength, _samplingData);
+            _minLength = i_minLength;
+
+#if UNITY_EDITOR
+            if (!fromFixedUpdate && _lastFrame >= OceanRenderer.FrameCount)
+            {
+                Debug.LogWarning("Each SampleHeightHelper object services a single height query per frame. To perform multiple queries, create multiple SampleHeightHelper objects or use the CollProvider.Query() API directly.");
+            }
+            _lastFrame = OceanRenderer.FrameCount;
+#endif
         }
 
         /// <summary>
@@ -35,18 +46,13 @@ namespace Crest
         /// </summary>
         public bool Sample(ref float o_height)
         {
-            if (!_valid)
+            var collProvider = OceanRenderer.Instance?.CollisionProvider;
+            if (collProvider == null) return false;
+
+            var status = collProvider.Query(GetHashCode(), _minLength, _queryPos, _queryResult, null, null);
+
+            if (!collProvider.RetrieveSucceeded(status))
             {
-                return false;
-            }
-
-            var status = OceanRenderer.Instance.CollisionProvider.Query(GetHashCode(), _samplingData, _queryPos, _queryResult, null, null);
-
-            OceanRenderer.Instance.CollisionProvider.ReturnSamplingData(_samplingData);
-
-            if (!OceanRenderer.Instance.CollisionProvider.RetrieveSucceeded(status))
-            {
-                _valid = false;
                 return false;
             }
 
@@ -57,18 +63,13 @@ namespace Crest
 
         public bool Sample(ref float o_height, ref Vector3 o_normal)
         {
-            if (!_valid)
+            var collProvider = OceanRenderer.Instance?.CollisionProvider;
+            if (collProvider == null) return false;
+
+            var status = collProvider.Query(GetHashCode(), _minLength, _queryPos, _queryResult, _queryResultNormal, null);
+
+            if (!collProvider.RetrieveSucceeded(status))
             {
-                return false;
-            }
-
-            var status = OceanRenderer.Instance.CollisionProvider.Query(GetHashCode(), _samplingData, _queryPos, _queryResult, _queryResultNormal, null);
-
-            OceanRenderer.Instance.CollisionProvider.ReturnSamplingData(_samplingData);
-
-            if (!OceanRenderer.Instance.CollisionProvider.RetrieveSucceeded(status))
-            {
-                _valid = false;
                 return false;
             }
 
@@ -80,16 +81,12 @@ namespace Crest
 
         public bool Sample(ref float o_height, ref Vector3 o_normal, ref Vector3 o_surfaceVel)
         {
-            if (!_valid)
-            {
-                return false;
-            }
+            var collProvider = OceanRenderer.Instance?.CollisionProvider;
+            if (collProvider == null) return false;
 
-            var status = OceanRenderer.Instance.CollisionProvider.Query(GetHashCode(), _samplingData, _queryPos, _queryResult, _queryResultNormal, _queryResultVel);
+            var status = collProvider.Query(GetHashCode(), _minLength, _queryPos, _queryResult, _queryResultNormal, _queryResultVel);
 
-            OceanRenderer.Instance.CollisionProvider.ReturnSamplingData(_samplingData);
-
-            if (!OceanRenderer.Instance.CollisionProvider.RetrieveSucceeded(status))
+            if (!collProvider.RetrieveSucceeded(status))
             {
                 return false;
             }
@@ -103,16 +100,11 @@ namespace Crest
 
         public bool Sample(ref Vector3 o_displacementToPoint, ref Vector3 o_normal, ref Vector3 o_surfaceVel)
         {
-            if (!_valid)
-            {
-                return false;
-            }
+            var collProvider = OceanRenderer.Instance?.CollisionProvider;
+            if (collProvider == null) return false;
+            var status = collProvider.Query(GetHashCode(), _minLength, _queryPos, _queryResult, _queryResultNormal, _queryResultVel);
 
-            var status = OceanRenderer.Instance.CollisionProvider.Query(GetHashCode(), _samplingData, _queryPos, _queryResult, _queryResultNormal, _queryResultVel);
-
-            OceanRenderer.Instance.CollisionProvider.ReturnSamplingData(_samplingData);
-
-            if (!OceanRenderer.Instance.CollisionProvider.RetrieveSucceeded(status))
+            if (!collProvider.RetrieveSucceeded(status))
             {
                 return false;
             }
@@ -126,16 +118,15 @@ namespace Crest
     }
 
     /// <summary>
-    /// Helper to obtain the ocean surface height at a single location. This is not particularly efficient to sample a single height,
+    /// Helper to obtain the flow data (horizontal water motion) at a single location. This is not particularly efficient to sample a single height,
     /// but is a fairly common case.
     /// </summary>
     public class SampleFlowHelper
     {
-        SamplingData _samplingData = new SamplingData();
         Vector3[] _queryPos = new Vector3[1];
         Vector3[] _queryResult = new Vector3[1];
 
-        bool _valid = false;
+        float _minLength = 0f;
 
         /// <summary>
         /// Call this to prime the sampling
@@ -143,12 +134,10 @@ namespace Crest
         /// <param name="i_queryPos">World space position to sample</param>
         /// <param name="i_minLength">The smallest length scale you are interested in. If you are sampling data for boat physics,
         /// pass in the boats width. Larger objects will filter out detailed flow information.</param>
-        /// <returns></returns>
-        public bool Init(Vector3 i_queryPos, float i_minLength)
+        public void Init(Vector3 i_queryPos, float i_minLength)
         {
             _queryPos[0] = i_queryPos;
-            var rect = new Rect(i_queryPos.x, i_queryPos.z, 0f, 0f);
-            return _valid = OceanRenderer.Instance.CollisionProvider.GetSamplingData(ref rect, i_minLength, _samplingData);
+            _minLength = i_minLength;
         }
 
         /// <summary>
@@ -156,16 +145,12 @@ namespace Crest
         /// </summary>
         public bool Sample(ref Vector2 o_flow)
         {
-            if (!_valid)
-            {
-                return false;
-            }
+            if (QueryFlow.Instance == null) return false;
 
-            var status = QueryFlow.Instance.Query(GetHashCode(), _samplingData, _queryPos, _queryResult);
+            var status = QueryFlow.Instance.Query(GetHashCode(), _minLength, _queryPos, _queryResult);
 
             if (!QueryFlow.Instance.RetrieveSucceeded(status))
             {
-                _valid = false;
                 return false;
             }
 

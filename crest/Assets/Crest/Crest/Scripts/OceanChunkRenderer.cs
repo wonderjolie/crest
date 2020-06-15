@@ -3,17 +3,14 @@
 // This file is subject to the MIT License as seen in the root of this folder structure (LICENSE)
 
 using UnityEngine;
-#if UNITY_2018
-using UnityEngine.Experimental.Rendering;
-#else
 using UnityEngine.Rendering;
-#endif
 
 namespace Crest
 {
     /// <summary>
     /// Sets shader parameters for each geometry tile/chunk.
     /// </summary>
+    [ExecuteAlways]
     public class OceanChunkRenderer : MonoBehaviour
     {
         public bool _drawRenderBounds = false;
@@ -30,14 +27,15 @@ namespace Crest
         int _geoDownSampleFactor = 1;
 
         static int sp_ReflectionTex = Shader.PropertyToID("_ReflectionTex");
-        static int sp_InstanceData = Shader.PropertyToID("_InstanceData");
         static int sp_GeomData = Shader.PropertyToID("_GeomData");
         static int sp_ForceUnderwater = Shader.PropertyToID("_ForceUnderwater");
+        // MeshScaleLerp, FarNormalsWeight, LODIndex (debug)
+        public static int sp_InstanceData = Shader.PropertyToID("_InstanceData");
 
         void Start()
         {
             _rend = GetComponent<Renderer>();
-            _mesh = GetComponent<MeshFilter>().mesh;
+            _mesh = GetComponent<MeshFilter>().sharedMesh;
             _boundsLocal = _mesh.bounds;
 
             UpdateMeshBounds();
@@ -57,30 +55,9 @@ namespace Crest
             _mesh.bounds = newBounds;
         }
 
-        private void OnEnable()
-        {
-#if UNITY_2018
-            RenderPipeline.beginCameraRendering += BeginCameraRendering;
-#else
-            RenderPipelineManager.beginCameraRendering += BeginCameraRendering;
-#endif
-        }
-        private void OnDisable()
-        {
-#if UNITY_2018
-            RenderPipeline.beginCameraRendering -= BeginCameraRendering;
-#else
-            RenderPipelineManager.beginCameraRendering -= BeginCameraRendering;
-#endif
-        }
-
         static Camera _currentCamera = null;
 
-#if UNITY_2018
-        private void BeginCameraRendering(Camera camera)
-#else
-        private void BeginCameraRendering(ScriptableRenderContext context, Camera camera)
-#endif
+        private static void BeginCameraRendering(ScriptableRenderContext context, Camera camera)
         {
             _currentCamera = camera;
         }
@@ -88,6 +65,11 @@ namespace Crest
         // Called when visible to a camera
         void OnWillRenderObject()
         {
+            if (OceanRenderer.Instance == null || _rend == null)
+            {
+                return;
+            }
+
             // check if built-in pipeline being used
             if (Camera.current != null)
             {
@@ -117,7 +99,7 @@ namespace Crest
             // blend furthest normals scale in/out to avoid pop, if scale could reduce
             var needToBlendOutNormals = _lodIndex == _totalLodCount - 1 && OceanRenderer.Instance.ScaleCouldDecrease;
             var farNormalsWeight = needToBlendOutNormals ? OceanRenderer.Instance.ViewerAltitudeLevelAlpha : 1f;
-            _mpb.SetVector(sp_InstanceData, new Vector4(meshScaleLerp, farNormalsWeight, _lodIndex, _totalLodCount));
+            _mpb.SetVector(sp_InstanceData, new Vector3(meshScaleLerp, farNormalsWeight, _lodIndex));
 
             // geometry data
             // compute grid size of geometry. take the long way to get there - make sure we land exactly on a power of two
@@ -134,16 +116,18 @@ namespace Crest
             // Assign LOD data to ocean shader
             var ldaws = OceanRenderer.Instance._lodDataAnimWaves;
             var ldsds = OceanRenderer.Instance._lodDataSeaDepths;
+            var ldclip = OceanRenderer.Instance._lodDataClipSurface;
             var ldfoam = OceanRenderer.Instance._lodDataFoam;
             var ldflow = OceanRenderer.Instance._lodDataFlow;
             var ldshadows = OceanRenderer.Instance._lodDataShadow;
 
             _mpb.SetInt(LodDataMgr.sp_LD_SliceIndex, _lodIndex);
-            ldaws.BindResultData(_mpb);
-            if (ldflow) ldflow.BindResultData(_mpb);
-            if (ldfoam) ldfoam.BindResultData(_mpb); else LodDataMgrFoam.BindNull(_mpb);
-            if (ldsds) ldsds.BindResultData(_mpb);
-            if (ldshadows) ldshadows.BindResultData(_mpb); else LodDataMgrShadow.BindNull(_mpb);
+            if (ldaws != null) ldaws.BindResultData(_mpb);
+            if (ldflow != null) ldflow.BindResultData(_mpb); else LodDataMgrFlow.BindNull(_mpb);
+            if (ldfoam != null) ldfoam.BindResultData(_mpb); else LodDataMgrFoam.BindNull(_mpb);
+            if (ldsds != null) ldsds.BindResultData(_mpb); else LodDataMgrSeaFloorDepth.BindNull(_mpb);
+            if (ldclip != null) ldclip.BindResultData(_mpb); else LodDataMgrClipSurface.BindNull(_mpb);
+            if (ldshadows != null) ldshadows.BindResultData(_mpb); else LodDataMgrShadow.BindNull(_mpb);
 
             var reflTex = PreparedReflections.GetRenderTexture(_currentCamera.GetHashCode());
             if (reflTex)
@@ -186,44 +170,53 @@ namespace Crest
         {
             _lodIndex = lodIndex; _totalLodCount = totalLodCount; _lodDataResolution = lodDataResolution; _geoDownSampleFactor = geoDownSampleFactor;
         }
+
+#if UNITY_2019_3_OR_NEWER
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+#endif
+        static void InitStatics()
+        {
+            // Init here from 2019.3 onwards
+            sp_ReflectionTex = Shader.PropertyToID("_ReflectionTex");
+            sp_GeomData = Shader.PropertyToID("_GeomData");
+            sp_ForceUnderwater = Shader.PropertyToID("_ForceUnderwater");
+            sp_InstanceData = Shader.PropertyToID("_InstanceData");
+            _currentCamera = null;
+        }
+
+        [RuntimeInitializeOnLoadMethod]
+        static void RunOnStart()
+        {
+            RenderPipelineManager.beginCameraRendering -= BeginCameraRendering;
+            RenderPipelineManager.beginCameraRendering += BeginCameraRendering;
+        }
     }
 
     public static class BoundsHelper
     {
         public static void DebugDraw(this Bounds b)
         {
-            // source: https://github.com/UnityCommunity/UnityLibrary
-            // license: mit - https://github.com/UnityCommunity/UnityLibrary/blob/master/LICENSE.md
+            var xmin = b.min.x;
+            var ymin = b.min.y;
+            var zmin = b.min.z;
+            var xmax = b.max.x;
+            var ymax = b.max.y;
+            var zmax = b.max.z;
 
-            // bounding box using Debug.Drawline
+            Debug.DrawLine(new Vector3(xmin, ymin, zmin), new Vector3(xmin, ymin, zmax));
+            Debug.DrawLine(new Vector3(xmin, ymin, zmin), new Vector3(xmax, ymin, zmin));
+            Debug.DrawLine(new Vector3(xmax, ymin, zmax), new Vector3(xmin, ymin, zmax));
+            Debug.DrawLine(new Vector3(xmax, ymin, zmax), new Vector3(xmax, ymin, zmin));
 
-            // bottom
-            var p1 = new Vector3(b.min.x, b.min.y, b.min.z);
-            var p2 = new Vector3(b.max.x, b.min.y, b.min.z);
-            var p3 = new Vector3(b.max.x, b.min.y, b.max.z);
-            var p4 = new Vector3(b.min.x, b.min.y, b.max.z);
+            Debug.DrawLine(new Vector3(xmin, ymax, zmin), new Vector3(xmin, ymax, zmax));
+            Debug.DrawLine(new Vector3(xmin, ymax, zmin), new Vector3(xmax, ymax, zmin));
+            Debug.DrawLine(new Vector3(xmax, ymax, zmax), new Vector3(xmin, ymax, zmax));
+            Debug.DrawLine(new Vector3(xmax, ymax, zmax), new Vector3(xmax, ymax, zmin));
 
-            Debug.DrawLine(p1, p2, Color.blue);
-            Debug.DrawLine(p2, p3, Color.red);
-            Debug.DrawLine(p3, p4, Color.yellow);
-            Debug.DrawLine(p4, p1, Color.magenta);
-
-            // top
-            var p5 = new Vector3(b.min.x, b.max.y, b.min.z);
-            var p6 = new Vector3(b.max.x, b.max.y, b.min.z);
-            var p7 = new Vector3(b.max.x, b.max.y, b.max.z);
-            var p8 = new Vector3(b.min.x, b.max.y, b.max.z);
-
-            Debug.DrawLine(p5, p6, Color.blue);
-            Debug.DrawLine(p6, p7, Color.red);
-            Debug.DrawLine(p7, p8, Color.yellow);
-            Debug.DrawLine(p8, p5, Color.magenta);
-
-            // sides
-            Debug.DrawLine(p1, p5, Color.white);
-            Debug.DrawLine(p2, p6, Color.gray);
-            Debug.DrawLine(p3, p7, Color.green);
-            Debug.DrawLine(p4, p8, Color.cyan);
+            Debug.DrawLine(new Vector3(xmax, ymax, zmax), new Vector3(xmax, ymin, zmax));
+            Debug.DrawLine(new Vector3(xmin, ymin, zmin), new Vector3(xmin, ymax, zmin));
+            Debug.DrawLine(new Vector3(xmax, ymin, zmin), new Vector3(xmax, ymax, zmin));
+            Debug.DrawLine(new Vector3(xmin, ymax, zmax), new Vector3(xmin, ymin, zmax));
         }
     }
 }
